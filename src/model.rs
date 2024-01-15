@@ -1,4 +1,6 @@
-use serde::Deserialize;
+use serde::{Deserialize, de::DeserializeOwned};
+
+use crate::{client::Client, auth::{Token, AuthFlow, Verifier}, Error};
 
 pub mod album;
 pub mod artist;
@@ -23,6 +25,80 @@ pub struct Page<T> {
     pub previous: Option<String>,
     pub total: u32,
     pub items: Vec<T>,
+}
+
+impl<T: DeserializeOwned> Page<T> {
+    pub async fn get_next<F: AuthFlow, V: Verifier> (&self, client: &mut Client<Token, F, V>) -> Result<Page<T>, Error> {
+        client.get::<(), _>(self.next.as_ref().unwrap().clone(), None).await
+    }
+
+    pub async fn get_previous<F: AuthFlow, V: Verifier> (&self, client: &mut Client<Token, F, V>) -> Result<Page<T>, Error> {
+        client.get::<(), _>(self.previous.as_ref().unwrap().clone(), None).await
+    }
+
+    pub async fn fetch_all<F: AuthFlow, V: Verifier> (self, client: &mut Client<Token, F, V>) -> Result<Vec<T>, Error> {
+        
+        let mut result = self.items;
+        let mut current_page = Page{ items: Vec::new(), ..self };
+
+        loop {
+            if current_page.next.is_none() { break; }
+            let mut next_page = current_page.get_next(client).await?;
+            result.append(&mut next_page.items);
+            current_page = next_page;
+        }
+
+        Ok(result)
+    }
+}
+
+pub struct PageIter<'client, T, F, V> 
+where
+    F: AuthFlow,
+    V: Verifier
+{
+    page: Page<T>,
+    page_iter: <Vec<T> as IntoIterator>::IntoIter,
+    client: &'client mut Client<Token, F, V>
+}
+
+impl<T, F, V> PageIter<'_, T, F, V> 
+where
+    T: DeserializeOwned,
+    F: AuthFlow,
+    V: Verifier
+{
+    async fn fetch_next_page(&mut self) -> Option<Result<T, Error>> {
+        if self.page.next.is_none() {
+            return None;
+        }
+        let next_page = self.page.get_next(self.client).await;
+        match next_page {
+            Err(err) => Some(Err(err)),
+            Ok(page) => {
+                self.page = Page{ items: Vec::new(), ..page};
+                self.page_iter = page.items.into_iter();
+                self.page_iter.next().map(|x| Ok(x))
+            }
+        }
+    }
+}
+
+impl<T, F, V> Iterator for PageIter<'_, T, F, V> 
+where
+    T: DeserializeOwned,
+    F: AuthFlow,
+    V: Verifier
+{
+    type Item = Result<T, Error>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let result = self.page_iter.next();
+        match result {
+            Some(val) => Some(Ok(val)),
+            None => self.fetch_next_page()
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
