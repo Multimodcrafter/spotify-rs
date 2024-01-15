@@ -52,55 +52,6 @@ impl<T: DeserializeOwned> Page<T> {
     }
 }
 
-pub struct PageIter<'client, T, F, V> 
-where
-    F: AuthFlow,
-    V: Verifier
-{
-    page: Page<T>,
-    page_iter: <Vec<T> as IntoIterator>::IntoIter,
-    client: &'client mut Client<Token, F, V>
-}
-
-impl<T, F, V> PageIter<'_, T, F, V> 
-where
-    T: DeserializeOwned,
-    F: AuthFlow,
-    V: Verifier
-{
-    async fn fetch_next_page(&mut self) -> Option<Result<T, Error>> {
-        if self.page.next.is_none() {
-            return None;
-        }
-        let next_page = self.page.get_next(self.client).await;
-        match next_page {
-            Err(err) => Some(Err(err)),
-            Ok(page) => {
-                self.page = Page{ items: Vec::new(), ..page};
-                self.page_iter = page.items.into_iter();
-                self.page_iter.next().map(|x| Ok(x))
-            }
-        }
-    }
-}
-
-impl<T, F, V> Iterator for PageIter<'_, T, F, V> 
-where
-    T: DeserializeOwned,
-    F: AuthFlow,
-    V: Verifier
-{
-    type Item = Result<T, Error>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let result = self.page_iter.next();
-        match result {
-            Some(val) => Some(Ok(val)),
-            None => self.fetch_next_page()
-        }
-    }
-}
-
 #[derive(Clone, Debug, Deserialize)]
 pub struct CursorPage<T> {
     pub href: String,
