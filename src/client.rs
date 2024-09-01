@@ -290,7 +290,14 @@ impl<F: AuthFlow, V: Verifier> Client<Token, F, V> {
         let res = req.send().await?;
 
         if res.status().is_success() {
-            Ok(res.json().await?)
+            let response_text = res.text().await?;
+            match serde_json::from_str(&response_text) {
+                Ok(parsed_response) => Ok(parsed_response),
+                Err(err) => Err(Error::Http(format!(
+                    "Could not parse the following response. error returned was: {}\n{}",
+                    err, response_text
+                ))),
+            }
         } else {
             Err(res.json::<SpotifyError>().await?.into())
         }
